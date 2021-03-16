@@ -183,7 +183,7 @@ action(call::Symbol, libraries::Vector{ActionSource}, sym::Symbol, file, args...
 
 # To test for broken packages which extend FileIO functions
 const fileiofuncs = Dict{Symbol,Function}(:load => load,
-                                          :loadstring => loadstreaming,
+                                          :loadstreaming => loadstreaming,
                                           :metadata => metadata,
                                           :save => save,
                                           :savestreaming => savestreaming)
@@ -198,20 +198,22 @@ function action(call::Symbol, libraries::Vector{ActionSource}, @nospecialize(fil
             mod = isa(library, Module) ? library : Base.require(library)
             f = if isdefined(mod, pkgfuncname)
                 getfield(mod, pkgfuncname)
-            else
+            elseif isdefined(mod, call)
                 getfield(mod, call)
+            else
+                throw(SpecError(mod, call))
             end
-            if f === get(fileiofuncs, call, nothing)
+            if f === fileiofuncs[call]
                 argtyps = map(Core.Typeof, args)
                 m = which(f, (typeof(file), argtyps...))
-                if m == which(f, (Formatted, argtyps...))
-                    throw(SpecError(mod, call))
+                if m == which(f, (Formatted, argtyps...))  # is it equal to a fallback?
+                    throw(SpecError(mod, call))            # prevent a StackOverflowError
                 end
                 @warn "$mod incorrectly extends FileIO functions (see FileIO documentation)"
             end
             return Base.invokelatest(f, file, args...; options...)
         catch e
-            if isa(e, MethodError) || isa(e, SpecError)
+            if isa(e, SpecError)
                 str = "neither $call nor $pkgfuncname is defined"
                 e = issave ? WriterError(string(mod), str, e) : LoaderError(string(mod), str, e)
             end
